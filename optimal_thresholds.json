@@ -1,0 +1,13 @@
+{
+  "default": 0.5,
+  "conservative": 0.3,
+  "aggressive": 0.7,
+  "skin_type_VI": 0.35,
+  "skin_type_V": 0.4,
+  "skin_type_IV": 0.45,
+  "skin_type_III": 0.5,
+  "skin_type_II": 0.55,
+  "skin_type_I": 0.6,
+  "high_risk": 0.3,
+  "low_risk": 0.6
+}
