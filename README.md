@@ -1,3 +1,7 @@
+---
+title: Skin Lesion Classifier
+sdk: docker
+---
 # Skin Lesion Classifier (Flask)
 
 A comprehensive medical analysis tool for skin lesion assessment using advanced computer vision (CNN) and medical criteria (ABCDE, risk factors).
@@ -83,4 +87,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Author
 
-Developed by Saanvi Aneja. Maintained and extended for advanced skin lesion analysis. 
+Developed by Saanvi Aneja. Maintained and extended for advanced skin lesion analysis.
