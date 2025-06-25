@@ -9,13 +9,16 @@ import time
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__,
-            template_folder='../frontend/templates',
-            static_folder='../frontend/static')
+            template_folder='templates',
+            static_folder='static')
 app.secret_key = os.environ.get("SESSION_SECRET", "fallback-secret-key-for-dev")
 
 # Configuration
-app.config['UPLOAD_FOLDER'] = '../frontend/static/uploads'
+app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+# Ensure upload directory exists
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Allowed file extensions
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
@@ -48,6 +51,11 @@ def cleanup_old_uploads():
 def allowed_file(filename):
     """Check if the uploaded file has an allowed extension"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for deployment monitoring"""
+    return {'status': 'healthy', 'message': 'Skin Lesion Classifier is running'}, 200
 
 @app.route('/', methods=['GET', 'POST'])
 def home():
