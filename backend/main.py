@@ -14,7 +14,7 @@ app = Flask(__name__,
 app.secret_key = os.environ.get("SESSION_SECRET", "fallback-secret-key-for-dev")
 
 # Configuration
-app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads')
+app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Ensure upload directory exists
@@ -220,4 +220,12 @@ def handle_exception(e):
     return render_template('index.html', error="An unexpected error occurred"), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5003, debug=True)
+    # Log startup information
+    app.logger.info(f"Starting Flask app on port 5000")
+    app.logger.info(f"Upload folder: {app.config['UPLOAD_FOLDER']}")
+    app.logger.info(f"Template folder: {app.template_folder}")
+    app.logger.info(f"Static folder: {app.static_folder}")
+    
+    # Get port from environment variable (for Render)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
