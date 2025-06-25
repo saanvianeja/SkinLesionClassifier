@@ -54,7 +54,7 @@ A comprehensive medical analysis tool for skin lesion assessment using advanced 
    ```
 
 6. **Access the application**:
-   Open your browser and go to `http://127.0.0.1:5003` (or the port shown in the terminal)
+   Open your browser and go to `http://127.0.0.1:5000` (or the port shown in the terminal)
 
 ## Usage
 
