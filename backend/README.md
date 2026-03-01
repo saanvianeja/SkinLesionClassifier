@@ -19,8 +19,7 @@ A comprehensive medical analysis tool for skin lesion assessment using advanced 
 ## Technology Stack
 
 - **Backend**: Flask (Python)
-- **Frontend**: Bootstrap 5, HTML5, CSS3, JavaScript
-- **Image Processing**: OpenCV, PIL
+- **Image Processing**: OpenCV
 - **Machine Learning**: PyTorch, scikit-learn
 - **Medical Analysis**: Custom ABCDE algorithm implementation
 
@@ -75,16 +74,7 @@ A comprehensive medical analysis tool for skin lesion assessment using advanced 
 
 ## Medical Disclaimer
 
-This tool is designed for educational and screening purposes only. It should not replace professional medical evaluation, diagnosis, or treatment. Always consult with a qualified dermatologist for definitive medical advice.
-
-## Contributing
-
-Contributions are welcome! Please ensure all medical-related changes follow established clinical guidelines.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
+This tool is designed for educational and screening purposes only. It should not replace professional medical evaluation, diagnosis, or treatment. 
 ## Author
 
-Developed by Saanvi Aneja. Maintained and extended for advanced skin lesion analysis.
+Developed by Saanvi Aneja. 
