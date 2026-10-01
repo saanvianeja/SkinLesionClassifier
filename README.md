@@ -4,9 +4,71 @@ Educational binary classification of HAM10000 dermoscopic images using **PyTorch
 
 This is a computer-vision / ML portfolio project, **not a medical device**. It does not diagnose melanoma or any other disease.
 
+## Demo
+
+Streamlit app (local): `streamlit run streamlit_app.py`
+
+Deployed URL: _not published yet_
+
 ## Overview
 
-HAM10000 is a seven-class diagnostic dataset. This repository trains a two-class MobileNetV2 (benign vs a project-defined positive class), selects an operating threshold on **validation only**, and reports a single locked held-out **test** evaluation.
+This project investigates binary classification of HAM10000 dermoscopic lesion images with transfer learning. A pretrained MobileNetV2 is adapted to a project-defined benign vs positive class, an operating threshold is chosen on **validation only**, and a single locked held-out **test** evaluation is reported. Grad-CAM provides a spatial visualization of regions that influenced the displayed class output.
+
+The goal is an educational ML / computer-vision project, not medical diagnosis.
+
+## Results
+
+Locked fine-tuned MobileNetV2 on the held-out **test** set (threshold **0.29**):
+
+| Metric | Value |
+|---|---|
+| Test ROC-AUC | 0.896 |
+| Sensitivity | 82.6% |
+| Specificity | 76.0% |
+| Balanced accuracy | 79.3% |
+| Accuracy | 0.773 |
+| Precision (positive) | 0.449 |
+| F1 (positive) | 0.582 |
+
+Test set: **1,505** images (**288** malignant / positive, **1,217** benign).
+
+Confusion matrix: TN 925, FP 292, FN 50, TP 238.
+
+95% bootstrap CIs (1,000 resamples, seed 42): ROC-AUC **0.877–0.913**; sensitivity **0.782–0.867**; specificity **0.736–0.784**.
+
+These are experiment metrics on HAM10000, not clinical performance.
+
+![Test ROC](docs/images/test_roc_curve.png)
+
+![Test confusion matrix](docs/images/test_confusion_matrix.png)
+
+## ML Pipeline
+
+HAM10000  
+→ lesion-level split (seed 42)  
+→ MobileNetV2 / ImageNet  
+→ frozen-backbone classifier baseline  
+→ full-network fine-tuning  
+→ validation threshold selection (locked **0.29**)  
+→ one-shot held-out test evaluation  
+→ Grad-CAM  
+→ Streamlit demo
+
+Frozen baseline best **validation** ROC-AUC ≈ **0.876**. Fine-tuning best **validation** ROC-AUC **0.921946**. Fine-tuning improved validation discrimination relative to the frozen baseline (no formal significance test).
+
+```bash
+python -m skinlesion.train --experiment frozen
+
+python -m skinlesion.train \
+  --experiment finetune \
+  --init-checkpoint artifacts/mobilenetv2_frozen_baseline.pth
+
+python -m skinlesion.threshold --checkpoint artifacts/mobilenetv2_finetuned.pth
+
+python -m skinlesion.final_test
+```
+
+`python -m skinlesion.evaluate` reports **argmax** metrics on a chosen split (default: validation). Do not use it for the locked test numbers above; those come from `final_test` at threshold 0.29.
 
 ## Dataset
 
@@ -29,13 +91,9 @@ HAM10000 **does not** provide an official binary benign/malignant label. The gro
 
 `akiec` combines actinic keratoses and intraepithelial carcinoma (Bowen's disease). Grouping it with the positive class is a simplification. It does **not** mean every actinic keratosis is equivalent to invasive malignancy.
 
-Images live locally in `data/ham10000/` (gitignored). Do not commit the raw dataset.
+Images live locally in `data/ham10000/` (gitignored).
 
-## Leakage-safe splits
-
-Many lesions have multiple images (1,956 lesions have more than one). An image-level split can put the same lesion in train and test.
-
-Splits are **lesion-level**, seed **42**, with **no lesion or image ID overlap**.
+Splits are **lesion-level** so images of the same lesion cannot leak across train / validation / test:
 
 | split | images | lesions | benign | positive |
 |---|---|---|---|---|
@@ -43,139 +101,76 @@ Splits are **lesion-level**, seed **42**, with **no lesion or image ID overlap**
 | validation | 1,500 | 1,120 | 1,203 | 297 |
 | test | 1,505 | 1,121 | 1,217 | 288 |
 
-Manifests: `data/splits/{train,val,test}.csv`. Training does not regenerate them.
+Train imbalance ≈ **4.12:1**. Weighted cross-entropy (train-only balanced weights: benign **0.6213**, positive **2.5603**).
 
-## Class imbalance
+## Evaluation
 
-Train set ≈ **4.12:1** benign:positive (5,641 / 1,369). Weighted cross-entropy used train-only balanced weights: **benign 0.6213**, **positive 2.5603**. Accuracy alone is a poor summary because a majority-benign classifier can look strong without detecting the positive class.
+Threshold **0.50 was not** used as the deployed rule. Candidates were compared on **validation** before the test set was opened. Locked rule: malignant if \(P(\text{malignant}) \ge 0.29\) (Youden J / ≥85% sensitivity with max specificity on validation).
 
-## Model
-
-- torchvision **MobileNetV2**, ImageNet-pretrained
-- input **224×224**, ImageNet mean/std
-- classifier: `Dropout(0.2)` + `Linear(last_channel, 2)`
-
-Transfer learning: reuse ImageNet convolutional features, then adapt the head (and later the full net) to this binary task.
-
-## Experiment 1 — frozen backbone
-
-Feature extractor frozen; classifier trained (2,562 / 2,226,434 parameters). Best **validation** ROC-AUC ≈ **0.876**. This is the transfer-learning baseline.
-
-```bash
-python -m skinlesion.train --experiment frozen
-```
-
-Saves `artifacts/mobilenetv2_frozen_baseline.pth` (never overwrites the legacy archive checkpoint).
-
-## Experiment 2 — fine-tuning
-
-Initialized from the frozen baseline; entire MobileNetV2 unfrozen; lower learning rate on the backbone; early stopping on validation ROC-AUC. Best **validation** ROC-AUC **0.921946**. Fine-tuning improved validation discrimination relative to the frozen baseline (no formal significance test).
-
-```bash
-python -m skinlesion.train \
-  --experiment finetune \
-  --init-checkpoint artifacts/mobilenetv2_frozen_baseline.pth
-```
-
-Saves `artifacts/mobilenetv2_finetuned.pth`.
-
-## Threshold selection (validation only)
-
-The displayed class is **not** argmax / 0.50. Thresholds were compared on **validation** before the test set was used.
-
-| rule | threshold | sensitivity | specificity |
-|---|---|---|---|
-| default 0.50 | 0.50 | 0.650 | 0.935 |
-| max F1 | 0.42 | 0.744 | 0.909 |
-| Youden J and ≥85% sensitivity (max spec) | **0.29** | 0.865 | 0.818 |
-| ≥90% sensitivity (max spec) | 0.24 | 0.906 | 0.763 |
-
-**Locked threshold: 0.29** (malignant if \(P(\text{malignant}) \ge 0.29\)).
-
-```bash
-python -m skinlesion.threshold --checkpoint artifacts/mobilenetv2_finetuned.pth
-```
+The test set was evaluated **once** for reporting. It was not used to select the architecture, checkpoint, or threshold.
 
 ![Validation sensitivity and specificity vs threshold](docs/images/val_sensitivity_specificity_vs_threshold.png)
 
-## Final held-out test results
-
-Reporting-only evaluation of `artifacts/mobilenetv2_finetuned.pth` at threshold **0.29** on `data/splits/test.csv`. The threshold was **not** retuned on test.
-
-n = **1,505** (1,217 benign, 288 positive)
-
-| Metric | Value |
-|---|---|
-| ROC-AUC | 0.896 |
-| Accuracy | 0.773 |
-| Balanced accuracy | 0.793 |
-| Sensitivity | 0.826 |
-| Specificity | 0.760 |
-| Precision (positive) | 0.449 |
-| F1 (positive) | 0.582 |
-
-Confusion matrix: TN **925**, FP **292**, FN **50**, TP **238**.
-
-95% bootstrap CIs (1,000 resamples, seed 42): ROC-AUC **0.877–0.913**; sensitivity **0.782–0.867**; specificity **0.736–0.784**.
-
-```bash
-python -m skinlesion.final_test
-```
-
-![Test ROC](docs/images/test_roc_curve.png)
-
-![Test confusion matrix](docs/images/test_confusion_matrix.png)
-
 ## Grad-CAM
 
-Grad-CAM highlights spatial regions that influenced a **selected class logit** (the displayed predicted class). It does **not** identify cancerous tissue or establish clinically meaningful reasoning.
-
-Example on an in-distribution HAM10000 training image (illustrative only):
+Grad-CAM highlights spatial regions that influenced a **selected class output** (the displayed predicted class). It does **not** identify cancerous tissue or establish clinically meaningful reasoning.
 
 ![Grad-CAM example](docs/images/gradcam_example.png)
 
-## Project structure
+## Running Locally
 
-```
-SkinLesionClassifier/
-├── streamlit_app.py
-├── skinlesion/          # data, model, train, eval, inference, Grad-CAM
-├── artifacts/           # checkpoints (see Git note below)
-├── data/ham10000/       # local dataset, gitignored
-├── data/splits/         # lesion-level CSV manifests
-├── outputs/             # run logs and plots, gitignored
-├── docs/images/         # figures embedded in this README
-├── requirements.txt
-├── Dockerfile
-└── README.md
-```
-
-## Run locally
+From the `SkinLesionClassifier/` directory:
 
 ```bash
-cd SkinLesionClassifier
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 streamlit run streamlit_app.py
 ```
 
-The demo expects `artifacts/mobilenetv2_finetuned.pth`. If that file is missing from a clone, training (or copying the checkpoint) is required; `pip install` + `streamlit run` is not enough without weights.
+The demo expects `artifacts/mobilenetv2_finetuned.pth`. Cloning without that checkpoint is not enough to run inference. HAM10000 is not in Git; place it at `data/ham10000/` to retrain.
 
-HAM10000 is not in Git. Place it at `data/ham10000/` to retrain or inspect diagnostics.
+Optional Docker (Streamlit on port 8501):
 
-## Tech stack
+```bash
+docker build -t skin-lesion-classifier .
+docker run -p 8501:8501 skin-lesion-classifier
+```
 
-Python, PyTorch, torchvision, scikit-learn, pandas, NumPy, Pillow, Matplotlib, Streamlit, tqdm.
+## Project Structure
+
+```
+SkinLesionClassifier/
+├── streamlit_app.py          # Streamlit UI
+├── skinlesion/
+│   ├── ui.py                 # presentation helpers / CSS
+│   ├── inference.py          # threshold 0.29 prediction
+│   ├── gradcam.py
+│   ├── model.py
+│   ├── train.py
+│   ├── threshold.py          # validation-only threshold analysis
+│   ├── final_test.py         # locked held-out evaluation
+│   └── ...
+├── artifacts/                # checkpoints (finetuned weights required for the demo)
+├── data/splits/              # lesion-level CSV manifests
+├── docs/images/              # README / app figures
+├── requirements.txt
+├── Dockerfile
+└── README.md
+```
 
 ## Limitations
 
 - Binary reduction of a seven-class dataset; experimental class mapping (including `akiec`).
 - Class imbalance and moderate positive-class precision on test (many false positives at the locked threshold).
 - Trained only on HAM10000 dermoscopy; no external dataset or clinical validation.
+- Ordinary phone photographs are out of the training distribution.
 - Grad-CAM is an attribution visualization, not medical localization.
-- False positives and false negatives both occur; educational/research use only.
+- False positives and false negatives both occur.
+- Educational / research use only. Not a medical device. Not for diagnosis, treatment, or clinical decision-making.
 
-## License / data
+## Disclaimer
 
-HAM10000 has its own terms. This project is for education and research demonstration.
+This application is a machine-learning portfolio project and is **not a medical device**. Predictions should not be used for diagnosis, treatment, or clinical decision-making. Consult a qualified healthcare professional for medical concerns.
+
+HAM10000 has its own data terms.
