@@ -1,74 +1,76 @@
-"""Reusable metric helpers. Does not split data or invent a test set.
+"""Evaluate a checkpoint on a fixed split. Never used for model selection.
 
-The original training CSV is not in this repository. Do not report performance
-numbers until the dataset and split strategy have been inspected.
+    python -m skinlesion.evaluate --checkpoint artifacts/mobilenetv2_frozen_baseline.pth --split test
 """
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
-import numpy as np
+import torch
+from torch.utils.data import DataLoader
 
-from skinlesion.config import CLASS_INDEX_TO_NAME, DATA_DIR, OUTPUTS_DIR
+from skinlesion.config import OUTPUTS_DIR, SEED, SPLITS_DIR
+from skinlesion.dataset import HAM10000Dataset
+from skinlesion.device import select_device
+from skinlesion.metrics import compute_metrics, plot_confusion_matrix, plot_roc, save_json
+from skinlesion.model import load_model
+from skinlesion.seed import dataloader_generator, seed_worker, set_seed
+from skinlesion.transforms import eval_transforms
 
 
-def compute_classification_metrics(y_true, y_pred, labels=(0, 1)) -> dict:
-    """Compute common binary metrics from already-defined predictions."""
-    from sklearn.metrics import (
-        accuracy_score,
-        classification_report,
-        confusion_matrix,
-        f1_score,
-        recall_score,
+def evaluate_split(checkpoint: Path, split_csv: Path, out_dir: Path, batch_size: int = 16, device=None):
+    set_seed(SEED)
+    device = select_device(str(device) if device is not None else None)
+    model, load_result = load_model(checkpoint, device=device)
+    if load_result.missing_keys or load_result.unexpected_keys:
+        raise RuntimeError(f"Checkpoint mismatch: {load_result}")
+
+    dataset = HAM10000Dataset(split_csv, transform=eval_transforms())
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+        worker_init_fn=seed_worker,
+        generator=dataloader_generator(SEED),
     )
+    ys, preds, scores = [], [], []
+    model.eval()
+    with torch.no_grad():
+        for images, labels in loader:
+            images = images.to(device)
+            logits = model(images)
+            ys.extend(labels.numpy())
+            preds.extend(torch.argmax(logits, dim=1).cpu().numpy())
+            scores.extend(torch.softmax(logits, dim=1)[:, 1].cpu().numpy())
 
-    y_true = np.asarray(y_true)
-    y_pred = np.asarray(y_pred)
-    target_names = [CLASS_INDEX_TO_NAME[i] for i in labels]
-    return {
-        "accuracy": float(accuracy_score(y_true, y_pred)),
-        "weighted_f1": float(f1_score(y_true, y_pred, average="weighted")),
-        "per_class_recall": {
-            CLASS_INDEX_TO_NAME[i]: float(recall)
-            for i, recall in zip(labels, recall_score(y_true, y_pred, labels=labels, average=None, zero_division=0))
-        },
-        "confusion_matrix": confusion_matrix(y_true, y_pred, labels=labels).tolist(),
-        "classification_report": classification_report(
-            y_true, y_pred, labels=labels, target_names=target_names, zero_division=0
-        ),
-        "label_mapping_note": (
-            "CLASS_INDEX_TO_NAME is an unverified compatibility mapping from the old "
-            "inference code. Confirm against the original training CSV before interpreting metrics."
-        ),
-    }
-
-
-def load_split_csv(csv_path: str | Path):
-    """Load a caller-provided split file. Does not create splits."""
-    path = Path(csv_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Split CSV not found: {path}")
-    import pandas as pd
-
-    return pd.read_csv(path)
-
-
-def dataset_available(data_dir: Path | None = None) -> bool:
-    root = Path(data_dir) if data_dir else DATA_DIR
-    labels = root / "isic_labels.csv"
-    return labels.exists()
+    metrics = compute_metrics(ys, preds, scores)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    save_json(metrics, out_dir / "metrics.json")
+    plot_confusion_matrix(metrics["confusion_matrix"], out_dir / "confusion_matrix.png")
+    if metrics["roc_auc"] is not None:
+        plot_roc(ys, scores, out_dir / "roc_curve.png", metrics["roc_auc"])
+    return metrics
 
 
 def main():
-    print("Evaluation infrastructure only — no split strategy is defined yet.")
-    print(f"Expected labels file (not required for this command): {DATA_DIR / 'isic_labels.csv'}")
-    print(f"Outputs directory: {OUTPUTS_DIR}")
-    if not dataset_available():
-        print("No local ISIC CSV found. Metrics will not be computed.")
-        print("Provide inspected split CSVs and predictions later; do not generate ad-hoc splits here.")
-        return
-    print("Labels file is present, but this script will not auto-split or score until a split protocol is chosen.")
+    p = argparse.ArgumentParser()
+    p.add_argument("--checkpoint", type=Path, required=True)
+    p.add_argument("--split", choices=["train", "val", "test"], default="test")
+    p.add_argument("--split-csv", type=Path, default=None)
+    p.add_argument("--batch-size", type=int, default=16)
+    p.add_argument("--out-dir", type=Path, default=None)
+    args = p.parse_args()
+    split_csv = args.split_csv or (SPLITS_DIR / f"{args.split}.csv")
+    out_dir = args.out_dir or (OUTPUTS_DIR / args.checkpoint.stem / args.split)
+    metrics = evaluate_split(args.checkpoint, split_csv, out_dir, args.batch_size)
+    print(f"Wrote {out_dir / 'metrics.json'}")
+    print(
+        f"acc={metrics['accuracy']:.4f} mal_rec={metrics['recall_malignant']:.4f} "
+        f"spec={metrics['specificity']:.4f} f1={metrics['f1_malignant']:.4f} auc={metrics['roc_auc']}"
+    )
 
 
 if __name__ == "__main__":

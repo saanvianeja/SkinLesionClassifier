@@ -29,6 +29,26 @@ def create_model(num_classes: int = NUM_CLASSES, pretrained: bool = False) -> nn
     return model
 
 
+def freeze_backbone(model: nn.Module) -> nn.Module:
+    for param in model.features.parameters():
+        param.requires_grad = False
+    for param in model.classifier.parameters():
+        param.requires_grad = True
+    return model
+
+
+def unfreeze_backbone(model: nn.Module) -> nn.Module:
+    for param in model.parameters():
+        param.requires_grad = True
+    return model
+
+
+def trainable_parameter_counts(model: nn.Module) -> tuple[int, int]:
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    return trainable, total
+
+
 def load_model(
     weights_path: str | Path | None = None,
     device: torch.device | None = None,

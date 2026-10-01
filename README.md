@@ -28,20 +28,37 @@ docker run --rm -p 8501:8501 skin-lesion-classifier
 - Architecture: MobileNetV2, classifier `Dropout(0.2) + Linear(last_channel, 2)`
 - Weights: [`artifacts/best_isic_model.pth`](artifacts/best_isic_model.pth) (existing checkpoint; not retrained in this repo layout)
 - Eval preprocess: resize 224×224, ImageNet mean/std `[0.485, 0.456, 0.406]` / `[0.229, 0.224, 0.225]`
-- Inference mapping **0 → Benign, 1 → Malignant** is what the original `predict_with_cnn` code used. **It has not been verified** against the original training CSV or label-generation process.
+- Streamlit still loads the legacy `artifacts/best_isic_model.pth`. That file’s original training-label protocol is undocumented; new experiments use `skinlesion/labels.py`.
+
+## Labels (HAM10000)
+
+HAM10000 is a **7-class** diagnostic dataset (`nv`, `mel`, `bkl`, `bcc`, `akiec`, `vasc`, `df`). It has **no official benign/malignant binary target**.
+
+This project uses a modeling mapping:
+
+- **0 Benign:** `nv`, `bkl`, `df`, `vasc`
+- **1 Malignant:** `mel`, `bcc`, `akiec`
+
+`akiec` combines actinic keratoses and intraepithelial carcinoma (Bowen's disease). It is grouped into the malignant/positive class for this binary experiment only. That does **not** mean every actinic keratosis is clinically equivalent to invasive malignancy.
+
+Lesion-level splits (seed 42) live in `data/splits/` and are not regenerated during training.
 
 ## Training / evaluation
 
-Training data is not shipped. Split strategy is **not defined yet** — do not treat any auto-split as a finished protocol.
+HAM10000 images/metadata stay local (`data/ham10000/`, gitignored). The Streamlit app still loads the legacy `artifacts/best_isic_model.pth` until it is wired to a new checkpoint.
 
-- Train (only if you already have inspected train/val CSVs):  
-  `python -m skinlesion.train --train-csv ... --val-csv ... --img-dir ...`
-- Metric helpers: `python -m skinlesion.evaluate` (will not invent splits or report scores without data)
+```bash
+python -m skinlesion.train --experiment frozen
+python -m skinlesion.evaluate --checkpoint artifacts/mobilenetv2_frozen_baseline.pth --split test
+```
+
+Do not overwrite `artifacts/best_isic_model.pth`.
 
 ## Layout
 
 ```
 skinlesion/     model, transforms, dataset, train, evaluate, inference, Grad-CAM
-artifacts/      saved checkpoint
+data/splits/    fixed lesion-level train/val/test manifests
+artifacts/      checkpoints (legacy + new experiments)
 streamlit_app.py
 ```
