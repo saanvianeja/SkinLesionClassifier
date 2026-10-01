@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Local data and outputs (not shipped)
+data/*
+!data/.gitkeep
+!data/splits/
+!data/splits/*.csv
+data/ham10000/
+outputs/*
+!outputs/.gitkeep
+
+# Uploads / OS
+uploads/
+*.DS_Store
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+.torch/
