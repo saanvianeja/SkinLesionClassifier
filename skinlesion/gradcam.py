@@ -1,4 +1,9 @@
-"""Grad-CAM for MobileNetV2 using the shared model and eval transforms."""
+"""Grad-CAM for the locked MobileNetV2 classifier.
+
+Explains the *displayed prediction class* (threshold-based Benign=0 or Malignant=1)
+by attributing the corresponding logit to the last convolutional feature map in
+`model.features`. This is an explanatory visualization, not clinical evidence.
+"""
 
 from __future__ import annotations
 
@@ -6,17 +11,30 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
 from PIL import Image
 
-from skinlesion.config import DEFAULT_WEIGHTS_PATH, IMAGE_SIZE
-from skinlesion.inference import preprocess_image
+from skinlesion.config import DEFAULT_WEIGHTS_PATH
+from skinlesion.device import select_device
+from skinlesion.inference import predict_from_pil, preprocess_image
 from skinlesion.model import load_model
 
 
-def _last_conv_module(model: torch.nn.Module) -> torch.nn.Module:
-    """MobileNetV2 stores conv blocks in model.features; last layer is Conv2dNormActivation."""
-    return model.features[-1]
+def _last_conv_module(model: nn.Module) -> nn.Conv2d:
+    last = None
+    for module in model.features.modules():
+        if isinstance(module, nn.Conv2d):
+            last = module
+    if last is None:
+        raise RuntimeError("No Conv2d found in MobileNetV2 features.")
+    return last
+
+
+def _colorize(cam: np.ndarray) -> np.ndarray:
+    import matplotlib.cm as cm
+
+    colored = cm.jet(np.clip(cam, 0.0, 1.0))[..., :3]
+    return colored.astype(np.float32)
 
 
 def generate_gradcam(
@@ -25,20 +43,25 @@ def generate_gradcam(
     device: torch.device | None = None,
     weights_path: str | Path | None = None,
     target_index: int | None = None,
-) -> tuple[Image.Image, int]:
-    """Return a heatmap overlay and the class index used for CAM.
+) -> tuple[Image.Image, int, np.ndarray]:
+    """Overlay Grad-CAM for `target_index` (the displayed predicted class).
 
-    Requires a gradient through the last conv activations, so this is not run
-    under torch.no_grad().
+    Returns (overlay RGB matching original size, class index explained, cam 0-1).
+    Does not update model parameters.
     """
     if device is None:
-        device = torch.device("cpu")
+        device = select_device()
     if model is None:
         model, _ = load_model(weights_path=weights_path or DEFAULT_WEIGHTS_PATH, device=device)
     model.eval()
 
-    activations = []
-    gradients = []
+    rgb = image.convert("RGB")
+    orig_w, orig_h = rgb.size
+    if target_index is None:
+        target_index = predict_from_pil(rgb, model=model, device=device)["pred_index"]
+
+    activations: list[torch.Tensor] = []
+    gradients: list[torch.Tensor] = []
 
     def forward_hook(_module, _input, output):
         activations.append(output)
@@ -51,36 +74,35 @@ def generate_gradcam(
         target_layer.register_forward_hook(forward_hook),
         target_layer.register_full_backward_hook(backward_hook),
     ]
+    try:
+        batch = preprocess_image(rgb).to(device)
+        batch.requires_grad_(True)
+        logits = model(batch)
+        model.zero_grad(set_to_none=True)
+        logits[0, int(target_index)].backward()
+        if not activations or not gradients:
+            raise RuntimeError("Grad-CAM hooks did not capture activations/gradients.")
+        act = activations[0]
+        grad = gradients[0]
+        weights = grad.mean(dim=(2, 3), keepdim=True)
+        cam = torch.relu((weights * act).sum(dim=1, keepdim=True))
+        cam = cam[0, 0].detach().float().cpu().numpy()
+    finally:
+        for handle in handles:
+            handle.remove()
+        model.zero_grad(set_to_none=True)
 
-    rgb = image.convert("RGB")
-    batch = preprocess_image(rgb).to(device)
-    batch.requires_grad_(True)
-    logits = model(batch)
-    if target_index is None:
-        target_index = int(torch.argmax(logits, dim=1).item())
+    cam = np.nan_to_num(cam, nan=0.0, posinf=0.0, neginf=0.0)
+    cam_min, cam_max = float(cam.min()), float(cam.max())
+    if cam_max > cam_min:
+        cam = (cam - cam_min) / (cam_max - cam_min)
+    else:
+        cam = np.zeros_like(cam)
 
-    model.zero_grad(set_to_none=True)
-    logits[0, target_index].backward()
-
-    for handle in handles:
-        handle.remove()
-
-    act = activations[0].detach()[0]
-    grad = gradients[0].detach()[0]
-    weights = grad.mean(dim=(1, 2))
-    cam = torch.relu((weights[:, None, None] * act).sum(dim=0))
-    cam = cam - cam.min()
-    if cam.max() > 0:
-        cam = cam / cam.max()
-    cam = F.interpolate(
-        cam[None, None, :, :],
-        size=(IMAGE_SIZE, IMAGE_SIZE),
-        mode="bilinear",
-        align_corners=False,
-    )[0, 0].cpu().numpy()
-
-    heatmap = np.uint8(255 * cam)
-    heatmap_img = Image.fromarray(heatmap).resize(rgb.size).convert("RGB")
-    # Simple red overlay without adding OpenCV as a dependency.
-    overlay = Image.blend(rgb.resize(rgb.size), heatmap_img, alpha=0.45)
-    return overlay, target_index
+    cam_u8 = np.clip(cam * 255.0, 0, 255).astype(np.uint8)
+    cam_img = Image.fromarray(cam_u8, mode="L").resize((orig_w, orig_h), resample=Image.BILINEAR)
+    cam_resized = np.asarray(cam_img, dtype=np.float32) / 255.0
+    orig = np.asarray(rgb).astype(np.float32) / 255.0
+    overlay = (0.55 * orig) + (0.45 * _colorize(cam_resized))
+    overlay = np.clip(overlay * 255.0, 0, 255).astype(np.uint8)
+    return Image.fromarray(overlay), int(target_index), cam_resized

@@ -1,4 +1,7 @@
-"""CNN-only inference using the shared model and eval transforms."""
+"""CNN inference for the locked fine-tuned MobileNetV2.
+
+Prediction uses malignant_probability >= DECISION_THRESHOLD (0.29), not argmax.
+"""
 
 from __future__ import annotations
 
@@ -7,15 +10,15 @@ from pathlib import Path
 import torch
 from PIL import Image
 
-from skinlesion.config import CLASS_INDEX_TO_NAME, DEFAULT_WEIGHTS_PATH
+from skinlesion.config import CLASS_INDEX_TO_NAME, DECISION_THRESHOLD, DEFAULT_WEIGHTS_PATH
+from skinlesion.device import select_device
 from skinlesion.model import load_model
 from skinlesion.transforms import eval_transforms
 
 
 def preprocess_image(image: Image.Image) -> torch.Tensor:
-    """Apply the original eval Resize/ToTensor/ImageNet Normalize pipeline."""
-    tensor = eval_transforms()(image.convert("RGB"))
-    return tensor.unsqueeze(0)
+    """Shared eval preprocess: resize 224, ImageNet normalize."""
+    return eval_transforms()(image.convert("RGB")).unsqueeze(0)
 
 
 def predict_from_pil(
@@ -23,10 +26,10 @@ def predict_from_pil(
     model: torch.nn.Module | None = None,
     device: torch.device | None = None,
     weights_path: str | Path | None = None,
+    threshold: float = DECISION_THRESHOLD,
 ) -> dict:
-    """Return raw logits, softmax probabilities, and predicted class index."""
     if device is None:
-        device = torch.device("cpu")
+        device = select_device()
     if model is None:
         model, _ = load_model(weights_path=weights_path or DEFAULT_WEIGHTS_PATH, device=device)
 
@@ -35,17 +38,20 @@ def predict_from_pil(
     with torch.no_grad():
         logits = model(batch)
         probabilities = torch.softmax(logits, dim=1)[0]
-        pred_idx = int(torch.argmax(probabilities).item())
 
     probs = probabilities.detach().cpu().tolist()
+    p_benign, p_malignant = float(probs[0]), float(probs[1])
+    pred_index = 1 if p_malignant >= threshold else 0
     return {
         "logits": logits.detach().cpu().squeeze(0).tolist(),
-        "probabilities": {CLASS_INDEX_TO_NAME[i]: float(p) for i, p in enumerate(probs)},
-        "probability_vector": probs,
-        "pred_index": pred_idx,
-        "pred_label": CLASS_INDEX_TO_NAME[pred_idx],
-        "predicted_class_probability": float(probs[pred_idx]),
-        "label_mapping_unverified": True,
+        "probabilities": {CLASS_INDEX_TO_NAME[0]: p_benign, CLASS_INDEX_TO_NAME[1]: p_malignant},
+        "probability_vector": [p_benign, p_malignant],
+        "benign_probability": p_benign,
+        "malignant_probability": p_malignant,
+        "pred_index": pred_index,
+        "pred_label": CLASS_INDEX_TO_NAME[pred_index],
+        "decision_threshold": threshold,
+        "checkpoint": str(weights_path or DEFAULT_WEIGHTS_PATH),
     }
 
 

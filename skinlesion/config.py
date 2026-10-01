@@ -18,7 +18,8 @@ OUTPUTS_DIR = ROOT / "outputs"
 LEGACY_WEIGHTS_PATH = ARTIFACTS_DIR / "best_isic_model.pth"
 FROZEN_BASELINE_PATH = ARTIFACTS_DIR / "mobilenetv2_frozen_baseline.pth"
 FINETUNED_PATH = ARTIFACTS_DIR / "mobilenetv2_finetuned.pth"
-DEFAULT_WEIGHTS_PATH = LEGACY_WEIGHTS_PATH  # Streamlit still uses this until rewired
+DEFAULT_WEIGHTS_PATH = FINETUNED_PATH
+DECISION_THRESHOLD = 0.29
 
 IMAGE_SIZE = 224
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
